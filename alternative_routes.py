@@ -1,9 +1,23 @@
 
-from bus_data import get_stops, get_buses, get_routes #imports functions from existing files
+from bus_data import get_stops, get_buses, get_routes
 from occupancy import get_availability
+from urllib.parse import urlencode
 
 
-def get_alternatives( 
+# Create Google Maps walking directions to another bus stop
+def get_walking_directions(stop_name):
+    destination = f"{stop_name}, Dublin, Ireland"
+
+    parameters = urlencode({
+        "api": "1",
+        "destination": destination,
+        "travelmode": "walking"
+    })
+
+    return "https://www.google.com/maps/dir/?" + parameters
+
+
+def get_alternatives(
     stop_id,
     route_id,
     bus_id,
@@ -15,8 +29,8 @@ def get_alternatives(
     stops = get_stops()
 
     selected_stop = next(
-        (stop for stop in stops 
-         if stop["stop_id"] == stop_id), 
+        (stop for stop in stops
+         if stop["stop_id"] == stop_id),
         None
     )
 
@@ -25,13 +39,13 @@ def get_alternatives(
 
     # Find other stops in the same named area
     same_area_stops = [
-        stop for stop in stops #loops through the stops list of dictionaries 
-        if stop["area"] == selected_stop["area"] #checks whether the current stop belongs to same area as selected loop 
-        and stop["stop_id"] != stop_id #if the user has already selected S001 bus, the alternative route shouldn't suggest that again
+        stop for stop in stops
+        if stop.get("area")
+        and stop.get("area") == selected_stop.get("area")
+        and stop["stop_id"] != stop_id
     ]
 
-    candidates = [(stop_id, "Same stop")] #its a list containing all the bus stops where we want to search for alternative buses. 
-
+    candidates = [(stop_id, "Same stop")]
 
     for stop in same_area_stops:
         candidates.append(
@@ -40,27 +54,27 @@ def get_alternatives(
 
     alternatives = []
 
-    for candidate_stop_id, location_type in candidates: #each element in candidates is a tuple containing two values
+    for candidate_stop_id, location_type in candidates:
 
         # Find all buses serving this stop
-        buses = get_buses( 
+        buses = get_buses(
             candidate_stop_id,
             service_date=service_date
         )
 
-        for bus in buses: #looping through every bus returned by get_buses()
+        for bus in buses:
 
             # Don't recommend the original bus
             if bus["bus_id"] == bus_id:
                 continue
 
             # Don't recommend cancelled buses
-            if bus["service_status"].lower() == "cancelled": #if bus is cancelled skip that bus
+            if bus["service_status"].lower() == "cancelled":
                 continue
 
             # If a destination is given, ensure this route
             # serves that destination in our sample data
-            if destination_id is not None: # None means no destination provided 
+            if destination_id is not None:
                 destination_routes = get_routes(destination_id)
 
                 if bus["route_id"] not in destination_routes:
@@ -83,11 +97,18 @@ def get_alternatives(
             else:
                 recommendation = "Take another bus on the same route"
 
-            stop_name = next(  #finding the nect stop name using next()
+            stop_name = next(
                 stop["stop_name"]
                 for stop in stops
                 if stop["stop_id"] == candidate_stop_id
             )
+
+            # Create Google Maps walking directions
+            # only if the user needs to go to another stop
+            walking_link = None
+
+            if candidate_stop_id != stop_id:
+                walking_link = get_walking_directions(stop_name)
 
             alternatives.append({
                 "bus_id": bus["bus_id"],
@@ -99,7 +120,8 @@ def get_alternatives(
                 "occupancy": availability["occupancy_percentage"],
                 "colour": availability["colour"],
                 "recommendation": recommendation,
-                "location_type": location_type
+                "location_type": location_type,
+                "walking_link": walking_link
             })
 
     # Recommend less crowded buses first
@@ -111,3 +133,4 @@ def get_alternatives(
     )
 
     return alternatives
+
