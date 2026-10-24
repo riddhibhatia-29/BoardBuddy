@@ -1,0 +1,136 @@
+
+from bus_data import get_stops, get_buses, get_routes
+from occupancy import get_availability
+from urllib.parse import urlencode
+
+
+# Create Google Maps walking directions to another bus stop
+def get_walking_directions(stop_name):
+    destination = f"{stop_name}, Dublin, Ireland"
+
+    parameters = urlencode({
+        "api": "1",
+        "destination": destination,
+        "travelmode": "walking"
+    })
+
+    return "https://www.google.com/maps/dir/?" + parameters
+
+
+def get_alternatives(
+    stop_id,
+    route_id,
+    bus_id,
+    service_date,
+    destination_id=None,
+    needs_seat=False
+):
+    # Get all stops and find the selected stop
+    stops = get_stops()
+
+    selected_stop = next(
+        (stop for stop in stops
+         if stop["stop_id"] == stop_id),
+        None
+    )
+
+    if selected_stop is None:
+        return []
+
+    # Find other stops in the same named area
+    same_area_stops = [
+        stop for stop in stops
+        if stop.get("area")
+        and stop.get("area") == selected_stop.get("area")
+        and stop["stop_id"] != stop_id
+    ]
+
+    candidates = [(stop_id, "Same stop")]
+
+    for stop in same_area_stops:
+        candidates.append(
+            (stop["stop_id"], "Another stop in the same area")
+        )
+
+    alternatives = []
+
+    for candidate_stop_id, location_type in candidates:
+
+        # Find all buses serving this stop
+        buses = get_buses(
+            candidate_stop_id,
+            service_date=service_date
+        )
+
+        for bus in buses:
+
+            # Don't recommend the original bus
+            if bus["bus_id"] == bus_id:
+                continue
+
+            # Don't recommend cancelled buses
+            if bus["service_status"].lower() == "cancelled":
+                continue
+
+            # If a destination is given, ensure this route
+            # serves that destination in our sample data
+            if destination_id is not None:
+                destination_routes = get_routes(destination_id)
+
+                if bus["route_id"] not in destination_routes:
+                    continue
+
+            availability = get_availability(bus)
+
+            # If a seat is required, exclude buses
+            # without available seats
+            if needs_seat and availability["available_seats"] == 0:
+                continue
+
+            # Determine recommendation type
+            if candidate_stop_id != stop_id:
+                recommendation = "Consider another stop in the same area"
+
+            elif bus["route_id"] != route_id:
+                recommendation = "Take another bus route"
+
+            else:
+                recommendation = "Take another bus on the same route"
+
+            stop_name = next(
+                stop["stop_name"]
+                for stop in stops
+                if stop["stop_id"] == candidate_stop_id
+            )
+
+            # Create Google Maps walking directions
+            # only if the user needs to go to another stop
+            walking_link = None
+
+            if candidate_stop_id != stop_id:
+                walking_link = get_walking_directions(stop_name)
+
+            alternatives.append({
+                "bus_id": bus["bus_id"],
+                "route_id": bus["route_id"],
+                "stop_id": candidate_stop_id,
+                "stop_name": stop_name,
+                "arrival": bus["estimated_time"],
+                "available_seats": availability["available_seats"],
+                "occupancy": availability["occupancy_percentage"],
+                "colour": availability["colour"],
+                "recommendation": recommendation,
+                "location_type": location_type,
+                "walking_link": walking_link
+            })
+
+    # Recommend less crowded buses first
+    alternatives.sort(
+        key=lambda bus: (
+            bus["occupancy"],
+            bus["arrival"]
+        )
+    )
+
+    return alternatives
+
